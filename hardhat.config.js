@@ -1,6 +1,5 @@
-import { ChainId } from '@uniswap/sdk-core'
-import { UNIVERSAL_ROUTER_CREATION_BLOCK } from '@uniswap/universal-router-sdk'
-
+const ChainId = require('@uniswap/sdk-core').ChainId
+const UNIVERSAL_ROUTER_CREATION_BLOCK = require('@uniswap/universal-router-sdk').UNIVERSAL_ROUTER_CREATION_BLOCK
 /* eslint-env node */
 require('dotenv').config()
 
@@ -22,6 +21,8 @@ const forks = {
     ...forkingConfig,
   },
 }
+
+console.log('forks', forks)
 
 module.exports = {
   forks,

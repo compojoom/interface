@@ -1,3 +1,27 @@
+# Shutterized uniswap interface
+This repo is a clone of the uniswap interface with few modifications to make use of [Rolling Shutter](https://github.com/shutter-network/rolling-shutter)
+
+To start the interface, run the following commands:
+```
+yarn
+```
+
+Then launch hardhat node:
+```
+npx hardhat node
+```
+This will launch a local hardhat node that has cloned the mainnet state of the uniswap contracts.
+
+Afterward you can run the interface with:
+```
+yarn start
+```
+
+Note: you can ignore the typescript errors. The interface should  still work. 
+
+Note: Metamask has issues calculating the correct gas, so you would have to set the gas manually.
+
+
 # Uniswap Labs Interface
 
 [![codecov](https://codecov.io/gh/Uniswap/interface/branch/main/graph/badge.svg?token=YVT2Y86O82)](https://codecov.io/gh/Uniswap/interface)
