@@ -1,13 +1,16 @@
 import { BigNumber } from '@ethersproject/bignumber'
+import { hexConcat } from '@ethersproject/bytes'
 import { t } from '@lingui/macro'
+import { encrypt, init } from '@shutter-network/shutter-crypto'
 import { SwapEventName } from '@uniswap/analytics-events'
 import { Percent } from '@uniswap/sdk-core'
 import { SwapRouter, UNIVERSAL_ROUTER_ADDRESS } from '@uniswap/universal-router-sdk'
 import { FeeOptions, toHex } from '@uniswap/v3-sdk'
 import { useWeb3React } from '@web3-react/core'
 import { sendAnalyticsEvent, useTrace } from 'analytics'
+import { utils } from 'ethers'
 import useBlockNumber from 'lib/hooks/useBlockNumber'
-import { formatCommonPropertiesForTrade, formatSwapSignedAnalyticsEventProperties } from 'lib/utils/analytics'
+import { formatCommonPropertiesForTrade } from 'lib/utils/analytics'
 import { useCallback } from 'react'
 import { ClassicTrade, TradeFillType } from 'state/routing/types'
 import { useUserSlippageTolerance } from 'state/user/hooks'
@@ -15,8 +18,10 @@ import { trace } from 'tracing/trace'
 import { calculateGasMargin } from 'utils/calculateGasMargin'
 import { UserRejectedRequestError, WrongChainError } from 'utils/errors'
 import isZero from 'utils/isZero'
-import { didUserReject, swapErrorToUserReadableMessage } from 'utils/swapErrorToUserReadableMessage'
 
+import { didUserReject } from '../connection/utils'
+import { getEonKey, getNextEpoch, submitShutterTx } from '../utils/shutterCollator'
+import { swapErrorToUserReadableMessage } from '../utils/swapErrorToUserReadableMessage'
 import { PermitSignature } from './usePermitAllowance'
 
 /** Thrown when gas estimation fails. This class of error usually requires an emulator to determine the root cause. */
@@ -106,32 +111,84 @@ export function useUniversalRouterSwapCallback(
         const gasLimit = calculateGasMargin(gasEstimate)
         setTraceData('gasLimit', gasLimit.toNumber())
         const beforeSign = Date.now()
-        const response = await provider
-          .getSigner()
-          .sendTransaction({ ...tx, gasLimit })
-          .then((response) => {
-            sendAnalyticsEvent(SwapEventName.SWAP_SIGNED, {
-              ...formatSwapSignedAnalyticsEventProperties({
-                trade,
-                timeToSignSinceRequestMs: Date.now() - beforeSign,
-                allowedSlippage: options.slippageTolerance,
-                fiatValues,
-                txHash: response.hash,
-              }),
-              ...analyticsContext,
-            })
-            if (tx.data !== response.data) {
-              sendAnalyticsEvent(SwapEventName.SWAP_MODIFIED_IN_WALLET, {
-                txHash: response.hash,
-                ...analyticsContext,
-              })
+        const response = false
 
-              if (!response.data || response.data.length === 0 || response.data === '0x') {
-                throw new ModifiedSwapError()
-              }
-            }
-            return response
-          })
+        const dataForShutterTX = [tx.to, tx.data, tx.value]
+
+        await init('http://localhost:3000/assets/shutter/shutter-crypto.wasm')
+
+        const eonKey = await getEonKey(await provider.getBlockNumber())
+        const epoch = await getNextEpoch()
+        const eonPublicKey = utils.hexlify(utils.stripZeros(Buffer.from(eonKey.eon_public_key, 'base64')))
+        const epochId = Buffer.from(epoch.id, 'base64')
+        const sigma = new Uint8Array(32)
+        window.crypto.getRandomValues(sigma)
+
+        const encryptedMessage = await encrypt(
+          utils.arrayify(utils.RLP.encode(dataForShutterTX)),
+          // EON public key - call collator /eon endpoint
+          utils.arrayify(eonPublicKey),
+          utils.arrayify(epochId),
+          sigma
+        )
+
+        const feeData = await provider.getFeeData()
+
+        const nonce = await provider.getTransactionCount(account)
+        const l1BlockNumber = await provider.getBlockNumber()
+        const shutterTX = [
+          utils.hexlify(chainId), // ChainId
+          utils.hexlify(nonce), // Nonce
+          feeData.maxPriorityFeePerGas?.toHexString(), // GasTipCap - maxPriorityFeePerGas
+          feeData.maxFeePerGas?.toHexString(), // GAsFeeCap - map to maxFeePerGas
+          gasLimit.toHexString(), // Gas - gasLimit
+          encryptedMessage, // EncryptedPayload
+          utils.hexlify(utils.stripZeros(epochId)), //  BatchIndex == epochID????
+          utils.hexlify(l1BlockNumber), // L1BlockNumber = current block number (BB chain)
+        ]
+
+        const txHash = utils.keccak256(hexConcat(['0x50', utils.RLP.encode(shutterTX)]))
+        const address = await provider.getSigner().getAddress()
+        const signedShutterTx = await provider.send('eth_sign', [address.toString(), txHash])
+
+        const sig = utils.splitSignature(signedShutterTx)
+
+        shutterTX.push(utils.stripZeros(BigNumber.from(sig.recoveryParam).toHexString())) // V
+        shutterTX.push(utils.stripZeros(sig.r)) // r
+        shutterTX.push(utils.stripZeros(sig.s)) // s
+
+        // send to shutter tx endpoint
+        const shutterId = await submitShutterTx({
+          encrypted_tx: hexConcat(['0x50', utils.RLP.encode(shutterTX)]),
+          epoch: utils.hexlify(utils.stripZeros(epochId)),
+        })
+
+        console.log('shutter id', shutterId)
+
+        // const response = await provider.getSigner().sendTransaction({ ...tx, gasLimit })
+        //   .then((response) => {
+        //     sendAnalyticsEvent(SwapEventName.SWAP_SIGNED, {
+        //       ...formatSwapSignedAnalyticsEventProperties({
+        //         trade,
+        //         timeToSignSinceRequestMs: Date.now() - beforeSign,
+        //         allowedSlippage: options.slippageTolerance,
+        //         fiatValues,
+        //         txHash: response.hash,
+        //       }),
+        //       ...analyticsContext,
+        //     })
+        //     if (tx.data !== response.data) {
+        //       sendAnalyticsEvent(SwapEventName.SWAP_MODIFIED_IN_WALLET, {
+        //         txHash: response.hash,
+        //         ...analyticsContext,
+        //       })
+        //
+        //       if (!response.data || response.data.length === 0 || response.data === '0x') {
+        //         throw new ModifiedSwapError()
+        //       }
+        //     }
+        //     return response
+        //   })
         return {
           type: TradeFillType.Classic as const,
           response,

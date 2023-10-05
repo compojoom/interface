@@ -1,11 +1,9 @@
-import { encrypt, init } from '@shutter-network/shutter-crypto'
 import { CustomUserProperties, getBrowser, SharedEventName } from '@uniswap/analytics-events'
 import { useWeb3React } from '@web3-react/core'
 import { getDeviceId, sendAnalyticsEvent, Trace, user } from 'analytics'
 import ErrorBoundary from 'components/ErrorBoundary'
 import Loader from 'components/Icons/LoadingSpinner'
 import NavBar, { PageTabs } from 'components/NavBar'
-import { ethers } from 'ethers'
 import { useFeatureFlagsIsLoaded } from 'featureFlags'
 import { useInfoPoolPageEnabled } from 'featureFlags/flags/infoPoolPage'
 import { useAtom } from 'jotai'
@@ -109,33 +107,6 @@ const LazyLoadSpinner = () => (
   </SpinnerSVG>
 )
 
-const Shutter = () => {
-  // const wasm = await init()
-
-  useEffect(() => {
-    console.log('init', window)
-    const loadWasm = async () => {
-      await init('http://localhost:3000/assets/shutter/shutter-crypto.wasm')
-      const sigma = new Uint8Array(32)
-      window.crypto.getRandomValues(sigma)
-
-      const message = ethers.utils.defaultAbiCoder.encode(['bytes'], [ethers.utils.toUtf8Bytes('my message')])
-      const encryptedMessage = await encrypt(
-        ethers.utils.toUtf8Bytes('my message'),
-        ethers.utils.arrayify(
-          '0x0e6493bbb4ee8b19aa9b70367685049ff01dc9382c46aed83f8bc07d2a5ba3e6030bd83b942c1fd3dff5b79bef3b40bf6b666e51e7f0be14ed62daaffad47435265f5c9403b1a801921981f7d8659a9bd91fe92fb1cf9afdb16178a532adfaf51a237103874bb03afafe9cab2118dae1be5f08a0a28bf488c1581e9db4bc23ca'
-        ),
-        ethers.utils.arrayify(ethers.utils.formatBytes32String('0x2')),
-        sigma
-      )
-      console.log('shutter encrypted', encryptedMessage)
-    }
-
-    loadWasm()
-  }, [])
-
-  return null
-}
 export default function App() {
   const isLoaded = useFeatureFlagsIsLoaded()
   const [shouldDisableNFTRoutes, setShouldDisableNFTRoutes] = useAtom(shouldDisableNFTRoutesAtom)
@@ -230,7 +201,6 @@ export default function App() {
 
   return (
     <ErrorBoundary>
-      <Shutter />
       <DarkModeQueryParamReader />
       <Trace page={currentPage}>
         <StatsigProvider
