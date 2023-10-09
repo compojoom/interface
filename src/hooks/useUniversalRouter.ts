@@ -1,13 +1,16 @@
 import { BigNumber } from '@ethersproject/bignumber'
+import { Contract } from '@ethersproject/contracts'
+// import { Contract } from '@ethersproject/contracts'
 import { t } from '@lingui/macro'
 import { SwapEventName } from '@uniswap/analytics-events'
-import { Percent } from '@uniswap/sdk-core'
+import { Percent, V3_CORE_FACTORY_ADDRESSES } from '@uniswap/sdk-core'
 import { SwapRouter, UNIVERSAL_ROUTER_ADDRESS } from '@uniswap/universal-router-sdk'
-import { FeeOptions, toHex } from '@uniswap/v3-sdk'
+import IUniswapV3PoolEventsJSON from '@uniswap/v3-core/artifacts/contracts/interfaces/pool/IUniswapV3PoolEvents.sol/IUniswapV3PoolEvents.json'
+import { computePoolAddress, FeeOptions, toHex } from '@uniswap/v3-sdk'
 import { useWeb3React } from '@web3-react/core'
 import { sendAnalyticsEvent, useTrace } from 'analytics'
 import useBlockNumber from 'lib/hooks/useBlockNumber'
-import { formatCommonPropertiesForTrade, formatSwapSignedAnalyticsEventProperties } from 'lib/utils/analytics'
+import { formatCommonPropertiesForTrade } from 'lib/utils/analytics'
 import { useCallback } from 'react'
 import { ClassicTrade, TradeFillType } from 'state/routing/types'
 import { useUserSlippageTolerance } from 'state/user/hooks'
@@ -106,37 +109,40 @@ export function useUniversalRouterSwapCallback(
         const gasLimit = calculateGasMargin(gasEstimate)
         setTraceData('gasLimit', gasLimit.toNumber())
         const beforeSign = Date.now()
-        const response = await provider
-          .getSigner()
-          .sendTransaction({ ...tx, gasLimit })
-          .then((response) => {
-            sendAnalyticsEvent(SwapEventName.SWAP_SIGNED, {
-              ...formatSwapSignedAnalyticsEventProperties({
-                trade,
-                timeToSignSinceRequestMs: Date.now() - beforeSign,
-                allowedSlippage: options.slippageTolerance,
-                fiatValues,
-                txHash: response.hash,
-              }),
-              ...analyticsContext,
-            })
-            if (tx.data !== response.data) {
-              sendAnalyticsEvent(SwapEventName.SWAP_MODIFIED_IN_WALLET, {
-                txHash: response.hash,
-                ...analyticsContext,
+
+        const response = await new Promise((resolve, reject) => {
+          return provider
+            .getSigner()
+            .sendTransaction({ ...tx, gasLimit })
+            .then((response) => {
+              const pool = trade.routes[0].pools[0]
+
+              const currentPoolAddress = computePoolAddress({
+                factoryAddress: V3_CORE_FACTORY_ADDRESSES[chainId],
+                tokenA: pool.token0,
+                tokenB: pool.token1,
+                fee: pool.fee,
               })
 
-              if (!response.data || response.data.length === 0 || response.data === '0x') {
-                throw new ModifiedSwapError()
-              }
-            }
-            return response
-          })
+              const routerContract = new Contract(currentPoolAddress, IUniswapV3PoolEventsJSON.abi, provider)
+
+              routerContract.on(
+                'Swap',
+                async (sender, recipient, amount0In, amount1In, amount0Out, amount1Out, to, data) => {
+                  if (recipient === account) {
+                    resolve(await data.getTransaction())
+                  }
+                }
+              )
+            })
+        })
+
         return {
           type: TradeFillType.Classic as const,
           response,
         }
       } catch (swapError: unknown) {
+        console.log('catching errror?????', swapError)
         if (swapError instanceof ModifiedSwapError) throw swapError
 
         // GasEstimationErrors are already traced when they are thrown.
