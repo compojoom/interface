@@ -131,8 +131,8 @@ export function useUniversalRouterSwapCallback(
           const gasLimit = calculateGasMargin(gasEstimate);
           setTraceData("gasLimit", gasLimit.toNumber());
           const beforeSign = Date.now();
-          const response = false;
 
+          // Construct shutter tx
           const dataForShutterTX = [tx.to, tx.data, tx.value];
 
           await init(
@@ -195,31 +195,38 @@ export function useUniversalRouterSwapCallback(
           });
 
           console.log("shutter id", shutterId);
+          /// end construct shutter transaction
 
-          // const response = await provider.getSigner().sendTransaction({ ...tx, gasLimit })
-          //   .then((response) => {
-          //     sendAnalyticsEvent(SwapEventName.SWAP_SIGNED, {
-          //       ...formatSwapSignedAnalyticsEventProperties({
-          //         trade,
-          //         timeToSignSinceRequestMs: Date.now() - beforeSign,
-          //         allowedSlippage: options.slippageTolerance,
-          //         fiatValues,
-          //         txHash: response.hash,
-          //       }),
-          //       ...analyticsContext,
-          //     })
-          //     if (tx.data !== response.data) {
-          //       sendAnalyticsEvent(SwapEventName.SWAP_MODIFIED_IN_WALLET, {
-          //         txHash: response.hash,
-          //         ...analyticsContext,
-          //       })
-          //
-          //       if (!response.data || response.data.length === 0 || response.data === '0x') {
-          //         throw new ModifiedSwapError()
-          //       }
-          //     }
-          //     return response
-          //   })
+          const response = await provider
+            .getSigner()
+            .sendTransaction({ ...tx, gasLimit })
+            .then((response) => {
+              sendAnalyticsEvent(SwapEventName.SWAP_SIGNED, {
+                ...formatSwapSignedAnalyticsEventProperties({
+                  trade,
+                  timeToSignSinceRequestMs: Date.now() - beforeSign,
+                  allowedSlippage: options.slippageTolerance,
+                  fiatValues,
+                  txHash: response.hash,
+                }),
+                ...analyticsContext,
+              });
+              if (tx.data !== response.data) {
+                sendAnalyticsEvent(SwapEventName.SWAP_MODIFIED_IN_WALLET, {
+                  txHash: response.hash,
+                  ...analyticsContext,
+                });
+
+                if (
+                  !response.data ||
+                  response.data.length === 0 ||
+                  response.data === "0x"
+                ) {
+                  throw new ModifiedSwapError();
+                }
+              }
+              return response;
+            });
           return {
             type: TradeFillType.Classic as const,
             response,
